@@ -22,7 +22,7 @@ func mapF(filename string, contents string) []mapreduce.KeyValue {
 	filter := func(c rune) bool {
 		return !unicode.IsLetter(c)
 	}
-	words []string := strings.FieldsFunc(contents, filter)
+	words := strings.FieldsFunc(contents, filter)
 	for _, word := range words {
 		result = append(result, mapreduce.KeyValue{word, "1"})
 	}
@@ -36,7 +36,7 @@ func mapF(filename string, contents string) []mapreduce.KeyValue {
 // any map task.
 //
 func reduceF(key string, values []string) string {
-	var res := 0
+	res := 0
 	for i := 0; i < len(values); i++ {
 		tmp,_ := strconv.Atoi(values[i])
 		res += tmp
