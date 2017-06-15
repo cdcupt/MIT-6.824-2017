@@ -30,7 +30,21 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 	// Remember that workers may fail, and that any given worker may finish
 	// multiple tasks.
 	//
-	// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
-	//
+	barrier := sync.waitGroup{}
+	chan 
+	for i := 0; i < ntasks; i++ {
+		go func {
+			barrier.Add(1)
+			srv <- registerChan
+			args := DoTaskArgs{jobName, mapFiles[i], phase, TaskNumber, NumOtherPhase}
+			success := call(srv, Worker.DoTask, args, nil)
+			if(success) {
+				barrier.Done()
+			} else{
+				
+			}
+		}()
+	}
+	barrier.wait()
 	fmt.Printf("Schedule: %v phase done\n", phase)
 }
