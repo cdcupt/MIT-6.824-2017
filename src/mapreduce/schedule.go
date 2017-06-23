@@ -38,12 +38,15 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 	for i := 0; i < ntasks; i++ {
 		go func(num int) { // 
 			barrier.Add(1)
-			srv := <- registerChan
+			defer barrier.Done()
+			srv := <- registerChan // may be multiple times
 			args := &DoTaskArgs{jobName, mapFiles[num], phase, num, n_other}
 			for {
 				if call(srv, "Worker.DoTask", args, nil) {
-					barrier.Done()
+					//src can assign again
 					break
+				} else {
+					debug("retry task %s, %d\n", phase, num)
 				}
 			}
 		}(i)
