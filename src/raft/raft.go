@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"math"
 	"math/rand"
 	"sort"
 	"strings"
@@ -32,6 +31,9 @@ import (
 )
 
 const None int = -1
+const HeartBeatRate = 10
+const ElectionTimeout = 15
+const HeartTimeout = 5
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -82,28 +84,30 @@ type Raft struct {
 	state     StateType
 	term      int
 	leader    int                // leader peer's index
-	logEntry  []LogEntry
-	vote      int
+	vote      int                // vote for
 	votes     map[int]bool
-
+	
 	electionElapsed int
 	heartbeatElapsed int
 	//randomizedElectionTimeout is a random number between
 	// [electiontimeout, 2 * electiontimeout - 1]. It gets reset
 	// when raft changes its state to follower or candidate.
 	randomizedElectionTimeout int
+	
+	//tick func() // for heartbeat or election tick
+	//step func(r *raft, m pb.Message) // for every role behavior
 
 	committed int //index of highest log entry known to be committed
 	applied int // index of highest log entry applied to state machine 
+	nextIndex []int
+  	matchIndex []int
 
+	logEntries  []LogEntry
 }
 
 type LogEntry struct {
-
-}
-
-type AppendEntries struct {
-
+	term int
+	index int
 }
 
 // return currentTerm and whether this server
@@ -179,31 +183,58 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	DPrintf("%x receive vote req %d at term %d", rf.me, args.CandidateIndex, args.Term)
 	switch{
 		case args.Term < rf.term:
 			// ignore this
-			reply.Term = rf.term
 			reply.VoteGranted = false
-		case args.Term == None:
+		//case (args.Term == None || rf.vote == args.CandidateIndex) &&
+		//		():
 		case args.Term > rf.term:
 			// from new leader
 			reply.VoteGranted = true
-			reply.Term = args.Term
 			// become follower
 			rf.becomeFollower(args.Term, args.CandidateIndex)
+		default:
+			// term eq & index less ignore this
+			reply.VoteGranted = false
 	}
+	reply.Term = args.Term
 }
 
 type AppendEntriesArgs struct {
-
+	Term int // current term
+	Lead int // current leader id
+	PrevLogIndex int // term of prevLogIndex entry
+	PrevLogTerm int 
+	LeaderCommit int
+	Entries  []LogEntry
 }
 
 type AppendEntriesReply struct {
-
+	Term int // for leader update
+	Success bool
 }
 
+// heartbeat and claim to be leader
+//
 func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	// heartbeat
+	if len(args.Entries) == 0 {
+		rf.heartbeatElapsed = 0
+	}
 
+	if args.Term >= rf.term && args.Lead == rf.vote  {
+	
+	} else {
+		// claim to be leader
+		if args.Term > rf.term {
+			rf.becomeFollower(args.Term, args.Lead)
+		}
+
+		reply.Term = rf.term
+		reply.Success = false
+	}
 }
 
 // when state changes
@@ -223,13 +254,36 @@ func (rf *raft) reset(term int) {
 	rf.votes = make(map[int]bool)
 }
 
+func (rf *Raft) resetRandomizedElectionTimeout() {
+	rf.randomTimeout = ElectionTimeout + rand.Int31n(ElectionTimeout)
+}
+
 func (rf *Raft) becomeFollower(term int, lead int) {
 	rf.state = StateFollower
 	rf.reset(term)
-	// rf.tick = rf.tickElection
+	//rf.tick = tickElection
 	rf.leader = lead
 	// should log info
 	DPrintf("%x became follower at term %d", rf.me, rf.term)
+}
+
+func (rf *Raft) becomeCandidate() {
+	rf.state = StateCandidate
+	rf.reset(rf.term + 1)
+	//rf.tick = tickElection
+	rf.vote = rf.me
+	DPrintf("%x became candidate at term %d", rf.me, rf.term)
+}
+
+func (rf *Raft) becomeLeader() {
+	if rf.state == StateFollower {
+		panic("invalid transition [follower -> leader]")
+	}
+	rf.state = StateLeader
+	rf.reset(rf.term)
+	//rf.tick = tickHeartbeat
+	rf.leader = rf.me
+	DPrintf("%x became candidate at term %d", rf.me, rf.term)
 }
 
 //
@@ -305,6 +359,78 @@ func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
 
+func (rf *Raft)startElection() {
+	rf.term++
+	// electChan := make(chan bool)
+	// gather all votes from peers
+
+	// check if gather more than qurom number
+	
+	if rf.state == StatePreCandidate {
+		rf.campaign(campaignElection)
+	} else {
+		rf.becomeLeader()
+		// broadcast win election
+		rf.broadcastAppend()
+	}
+
+}
+
+func (rf *Raft)sendHeartbeat(index int) {
+	sendLogs := make([]LogEntry,1,1)
+	req := RequestAppendLog {
+		rf.term, rf.me,
+		preLogIndex, prefLogTerm, rf.commitIndex,
+		len(sendLogs), sendLogs
+	}
+	reply := RequestAppendLogReply{}
+	rf.sendAppendEntries(index, req, reply)
+	
+	if reply.Term > rf.currentTerm{
+		rf.ChangeToFollower()
+		rf.currentTerm = reply.Term
+	}
+	//
+}
+
+// thread for heartbeat and election
+func tickElection(rf *Raft) {
+	for {
+		gap := time.Millisecond * HeartBeatRate
+		tick := time.Tick(gap)
+		select {
+		case <- tick:
+			// TODO: or every tick a goroutine?
+			if rf.state == StateLeader {
+				// send heartbeat msg to all peers
+				for i, _ := range rf.peers {
+					// ???
+					if !rf.state == StateLeader {
+						break
+					}
+					if i != rf.me {
+						go rf.sendHeartbeat(i)
+					}
+				}
+				continue
+			}
+			// for candidate and follower
+			rf.electionElapsed++
+			rf.heartbeatElapsed++
+			if rf.electionElapsed > rf.randomTimeout {
+				rf.electionElapsed = 0
+				rf.becomeCandidate()
+				go rf.startElection()
+			}
+
+			if rf.heartbeatElapsed >  HeartTimeout {
+				rf.heartbeatElapsed = 0
+				rf.becomeCandidate()
+				go rf.startElection()
+			}
+	}
+}
+
 //
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
@@ -325,11 +451,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.becomeFollower(None, None)
-	// Periodically check leader state
+	// A thread periodically check leader state
 	// if timeout issues RequestVote RPC to all other servers
-	go func tickElection() {
-		
-	}
+	go tickHeartbeat(rf)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
