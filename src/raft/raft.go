@@ -76,7 +76,7 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 	state     StateType
-	term      int
+	term      int                // current term
 	leader    int                // leader peer's index
 	vote      int                // vote for
 	votes     map[int]bool
@@ -92,7 +92,8 @@ type Raft struct {
 	//step func(r *raft, m pb.Message) // for every role behavior
 
 	committed int //index of highest log entry known to be committed
-	applied int // index of highest log entry applied to state machine 
+	applied int // index of highest log entry applied to state machine
+	// only leader maintain 
 	nextIndex []int // for each peer
   	matchIndex []int // 
 
@@ -101,7 +102,8 @@ type Raft struct {
 
 type LogEntry struct {
 	Term int
-	Index int
+	Value interface{}
+	Index int // or rather eid
 }
 
 // return currentTerm and whether this server
@@ -210,6 +212,13 @@ type AppendEntriesReply struct {
 	Success bool
 }
 
+func min(x, y int) int {
+	if x > y {
+		return y
+	}
+	return x
+}
+
 // heartbeat and claim to be leader
 //
 func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -218,20 +227,39 @@ func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesRepl
 	if len(args.Entries) == 0 {
 		rf.heartbeatElapsed = 0
 	}
+	// Receive from leader
+	if args.Term >= rf.term {
 
-	if args.Term >= rf.term && args.Lead == rf.vote  {
-		reply.Term = args.Term
-		reply.Success = true
-
-	} else {
-		// claim to be leader
 		if args.Term > rf.term {
 			rf.becomeFollower(args.Term, args.Lead)
 		}
 
+		reply.Term = args.Term
+		if (rf.IsLogsContain(args.PrevLogTerm, args.PrevLogIndex)) {
+			reply.Success = true
+		}
+		// TODO: PrevLogIndex
+		if (rf.logEntries[args.PrevLogIndex].Term != args.PrevLogTerm) {
+			reply.Success = false
+		}
+
+	} else {
+
 		reply.Term = rf.term
 		reply.Success = false
 	}
+
+	if (args.LeaderCommit > rf.committed) {
+		last := len(rf.logEntries)
+		rf.committed = min(args.LeaderCommit, rf.logEntries[last - 1].Index)
+	}
+	// append logs ops
+	// if any conflicts then delete from there
+	if lastIndex, ok := rf.mapbeAppend(args.PrevLogIndex, args.PrevLogTerm, args.LeaderCommit, args.Entries...); ok {
+
+	}
+
+	if 
 }
 
 // when state changes
@@ -338,13 +366,32 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := None
-	term := None
-	isLeader := true
+	term, isLeader := rf.GetState()
 
 	// Your code here (2B).
-
-
+	// Raft phase two
+	if isLeader {
+		// update index and term
+		// store log to local
+		index := 
+		rf.logEntries = append(rf.logEntries, LogEntry{rf.term, command, index})
+		
+		go sendAllEntries()
+	}
+	
 	return index, term, isLeader
+}
+
+func (rf *Raft) sendAllEntries() {
+	for i := range rf.peers {
+		if i == rf.me {
+			continue
+		}
+
+		req := RequestAppendLog{rf.term, rf.me, preLogIndex, prefLogTerm, rf.LeaderCommit, sendLogs}
+		reply := RequestAppendLogReply{}
+		ok := rf.sendAppendEntries(peerid, &req, &reply)
+	}
 }
 
 //
@@ -362,8 +409,9 @@ func (rf *Raft)sendPeerVote(index int) {
 	term := rf.term
 	candidateId := rf.me
 	// 2b
-	lastLogIndex := 0
-	lastLogTerm := 0
+	last := len(rf.logEntries)
+	lastLogIndex := rf.logEntries[last - 1].Index
+	lastLogTerm := rf.logEntries[last - 1].Term
 
 	req := RequestVoteArgs{term, candidateId, lastLogIndex, lastLogTerm}
 	reply := RequestVoteReply{}
