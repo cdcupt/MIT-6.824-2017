@@ -26,8 +26,8 @@ import (
 
 const None int = -1
 const HeartBeatRate = 10
-const ElectionTimeout = 150
-const HeartTimeout = 5
+const ElectionTimeout = 100
+const HeartTimeout = 50
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -179,7 +179,7 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
-	DPrintf("%x receive vote req %d at term %d", rf.me, args.CandidateIndex, args.Term)
+	DPrintf("%d ask vote req from %x at term %d", args.CandidateIndex, rf.me, args.Term)
 	granted := false
 	if args.Term > rf.term {
 		// from leader
@@ -189,12 +189,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if args.Term == rf.term {
 		if rf.leader == None || rf.leader == args.CandidateIndex {
-			lastLogTerm := rf.getLastLogTerm()
-			lastLogIndex := rf.getLastLogIndex()
-			if (args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIndex) ) {
-				granted = true
-				rf.leader = args.CandidateIndex
-			}
+			granted = true
+			rf.leader = args.CandidateIndex
+			// lastLogTerm := rf.getLastLogTerm()
+			// lastLogIndex := rf.getLastLogIndex()
+			// if (args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIndex) ) {
+			// 	granted = true
+			// 	rf.leader = args.CandidateIndex
+			// }
 		}
 	}
 	reply.VoteGranted = granted
@@ -246,9 +248,9 @@ func (rf *Raft) getLastLogTerm() int {
 //
 func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	DPrintf("%x receive append req %d at term %d", rf.me, args.Lead, args.Term)
-	// heartbeat
 	success := false
 	matchIndex := 0
+	// heartbeat
 	if len(args.Entries) == 0 {
 		rf.heartbeatElapsed = 0
 	}
@@ -258,8 +260,9 @@ func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesRepl
 	}
 
 	if args.Term == rf.term {
+		// 
 		rf.becomeFollower(args.Term)
-
+		/*
 		if (rf.IsLogsContain(args.PrevLogTerm, args.PrevLogIndex)) {
 			success = true
 			// append logs ops
@@ -287,7 +290,7 @@ func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesRepl
 			if (args.LeaderCommit > rf.committed) {
 				rf.committed = min(args.LeaderCommit, rf.getLastLogIndex())
 			}
-		}
+		}*/
 		
 	}
 
@@ -472,6 +475,7 @@ func (rf *Raft)sendPeerVote(index int) {
 	reply := RequestVoteReply{}
 	ok := rf.sendRequestVote(index, &req, &reply)
 	if ok {
+		DPrintf("%x receive vote reply{Term:%d, VoteGranted:%t} from %d at term %d", rf.me, reply.Term, reply.VoteGranted, index, term)
 		if reply.Term > rf.term {
 			rf.becomeFollower(reply.Term)
 		}
