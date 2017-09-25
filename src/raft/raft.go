@@ -150,7 +150,7 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 }
 
-func (rf *Raft) quorum() int { return len(rf.peers)/2 + 1 }
+func (rf *Raft) quorum() int { return len(rf.peers)/2 }
 
 //
 // example RequestVote RPC arguments structure.
@@ -181,6 +181,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	DPrintf("%d ask vote req from %x at term %d", args.CandidateIndex, rf.me, args.Term)
 	granted := false
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	if args.Term > rf.term {
 		// from leader
 		granted = false
@@ -189,14 +192,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if args.Term == rf.term {
 		if rf.leader == None || rf.leader == args.CandidateIndex {
-			granted = true
-			rf.leader = args.CandidateIndex
-			// lastLogTerm := rf.getLastLogTerm()
-			// lastLogIndex := rf.getLastLogIndex()
-			// if (args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIndex) ) {
-			// 	granted = true
-			// 	rf.leader = args.CandidateIndex
-			// }
+			lastLogTerm := rf.getLastLogTerm()
+			lastLogIndex := rf.getLastLogIndex()
+			if (args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIndex) ) {
+				granted = true
+				rf.leader = args.CandidateIndex
+			}
 		}
 	}
 	reply.VoteGranted = granted
@@ -254,6 +255,9 @@ func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesRepl
 	if len(args.Entries) == 0 {
 		rf.heartbeatElapsed = 0
 	}
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	// Receive from leader
 	if args.Term > rf.term {
 		rf.becomeFollower(args.Term)
@@ -262,7 +266,7 @@ func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesRepl
 	if args.Term == rf.term {
 		// 
 		rf.becomeFollower(args.Term)
-		/*
+		
 		if (rf.IsLogsContain(args.PrevLogTerm, args.PrevLogIndex)) {
 			success = true
 			// append logs ops
@@ -290,7 +294,7 @@ func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesRepl
 			if (args.LeaderCommit > rf.committed) {
 				rf.committed = min(args.LeaderCommit, rf.getLastLogIndex())
 			}
-		}*/
+		}
 		
 	}
 
@@ -428,9 +432,11 @@ func (rf *Raft) sendAllEntries() {
 			continue
 		}
 		
+		// DPrintf("%d, %d", rf.nextIndex[i], rf.getLastLogIndex())
 		if rf.nextIndex[i] <= rf.getLastLogIndex() {
 			preLogIndex := rf.nextIndex[i]
-			preLogTerm := rf.logEntries[preLogIndex -1].Term
+			preLogTerm := rf.logEntries[preLogIndex].Term
+			// DPrintf("%d, %d", preLogIndex, preLogTerm)
 			sendLogs := rf.logEntries[preLogIndex:]
 
 			req := AppendEntriesArgs{rf.term, rf.me, preLogIndex, preLogTerm, rf.committed, sendLogs}
@@ -522,7 +528,7 @@ func (rf *Raft)sendHeartbeat(index int) {
 	preLogIndex := 0
 	preLogTerm := 0
 
-	sendLogs := make([]LogEntry,1,1)
+	sendLogs := make([]LogEntry,0,0)
 	req := AppendEntriesArgs{rf.term, rf.me, preLogIndex, preLogTerm, rf.committed, sendLogs}
 	reply := AppendEntriesReply{}
 	rf.sendAppendEntries(index, &req, &reply)
@@ -587,6 +593,9 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
+	// rf.logEntries = make([]LogEntry, 1, 1)
 
 	// Your initialization code here (2A, 2B, 2C).
 	rf.becomeFollower(0)
