@@ -187,7 +187,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.term {
 		// from leader
 		granted = false
-		rf.becomeFollower(args.Term)
+		rf.becomeFollower(args.Term, args.CandidateIndex)
 	}
 
 	if args.Term == rf.term {
@@ -248,24 +248,25 @@ func (rf *Raft) getLastLogTerm() int {
 // heartbeat and claim to be leader
 //
 func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
-	DPrintf("%x receive append req %d at term %d", rf.me, args.Lead, args.Term)
 	success := false
 	matchIndex := 0
 	// heartbeat
 	if len(args.Entries) == 0 {
-		rf.heartbeatElapsed = 0
+		DPrintf("%x receive heartbeat from %d at term %d", rf.me, args.Lead, args.Term)
+	} else {
+		DPrintf("%x receive append req from %d at term %d", rf.me, args.Lead, args.Term)
 	}
 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	// Receive from leader
 	if args.Term > rf.term {
-		rf.becomeFollower(args.Term)
+		rf.becomeFollower(args.Term, args.Lead)
 	}
 
 	if args.Term == rf.term {
 		// 
-		rf.becomeFollower(args.Term)
+		rf.becomeFollower(args.Term, args.Lead)
 		
 		if (rf.IsLogsContain(args.PrevLogTerm, args.PrevLogIndex)) {
 			success = true
@@ -295,8 +296,9 @@ func (rf * Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesRepl
 				rf.committed = min(args.LeaderCommit, rf.getLastLogIndex())
 			}
 		}
-		
 	}
+
+	DPrintf("%x append rec(%d) at term %d", rf.me, matchIndex, rf.term)
 
 	reply.Term = rf.term
 	reply.Success = success
@@ -329,9 +331,10 @@ func (rf *Raft) resetRandomizedElectionTimeout() {
 	rf.randomTimeout = ElectionTimeout + rand.Intn(ElectionTimeout)
 }
 
-func (rf *Raft) becomeFollower(term int) {
+func (rf *Raft) becomeFollower(term int, index int) {
 	rf.state = StateFollower
 	rf.reset(term)
+	rf.leader = index
 	//rf.tick = tickElection
 	DPrintf("%x became follower at term %d", rf.me, rf.term)
 }
@@ -444,7 +447,7 @@ func (rf *Raft) sendAllEntries() {
 			ok := rf.sendAppendEntries(i, &req, &reply)
 			if ok {
 				if reply.Term > rf.term {
-					rf.becomeFollower(reply.Term)
+					rf.becomeFollower(reply.Term, i)
 				}
 				if rf.state == StateLeader && rf.term == reply.Term {
 					if (reply.Success){
@@ -483,7 +486,7 @@ func (rf *Raft)sendPeerVote(index int) {
 	if ok {
 		DPrintf("%x receive vote reply{Term:%d, VoteGranted:%t} from %d at term %d", rf.me, reply.Term, reply.VoteGranted, index, term)
 		if reply.Term > rf.term {
-			rf.becomeFollower(reply.Term)
+			rf.becomeFollower(reply.Term, index)
 		}
 
 		if reply.Term == term  &&  rf.state == StateCandidate {
@@ -534,7 +537,7 @@ func (rf *Raft)sendHeartbeat(index int) {
 	rf.sendAppendEntries(index, &req, &reply)
 	
 	if reply.Term > rf.term {
-		rf.becomeFollower(reply.Term)
+		rf.becomeFollower(reply.Term, index)
 	}
 	//
 }
@@ -598,7 +601,7 @@ func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan 
 	// rf.logEntries = make([]LogEntry, 1, 1)
 
 	// Your initialization code here (2A, 2B, 2C).
-	rf.becomeFollower(0)
+	rf.becomeFollower(0, 0)
 	// A thread periodically check leader state
 	// if timeout issues RequestVote RPC to all other servers
 	go tickElection(rf)
